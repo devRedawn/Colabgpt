@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+    
+    // Helper function to check if user belongs to organization
+    function belongsToOrg(orgId) {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId == orgId;
+    }
+
+    // Users collection rules
+    match /users/{userId} {
+      // Users can read/write their own documents
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      // Allow authenticated users to create their own user document (simplified for initial setup)
+      allow create: if request.auth != null && request.auth.uid == userId;
+      
+      // Allow authenticated users to read other user documents (for admin checks and coworker lists)
+      allow read: if request.auth != null;
+      
+      // Allow admins to create coworker accounts
+      allow create: if isAdmin();
+    }
+    
+    // Organizations collection rules
+    match /organizations/{orgId} {
+      // Users can read their own organization
+      allow read: if belongsToOrg(orgId);
+      
+      // Organization admin can read/write organization data
+      allow read, write: if request.auth != null && 
+                            exists(/databases/$(database)/documents/organizations/$(orgId)) &&
+                            get(/databases/$(database)/documents/organizations/$(orgId)).data.adminId == request.auth.uid;
+      
+      // Allow authenticated users to create organizations (simplified for initial setup)
+      allow create: if request.auth != null && request.resource.data.adminId == request.auth.uid;
+      
+      // Allow updates for credential saving by organization admin
+      allow update: if request.auth != null && 
+                       resource.data.adminId == request.auth.uid;
+    }
+    
+    // Invitations collection rules
+    match /invitations/{inviteId} {
+      // Admins can create invitations
+      allow create: if isAdmin();
+      
+      // Users can read invitations sent to them
+      allow read: if request.auth != null && 
+                     (resource.data.inviteeEmail == request.auth.token.email || isAdmin());
+      
+      // Users can update invitations to accept/decline
+      allow update: if request.auth != null && 
+                       resource.data.inviteeEmail == request.auth.token.email;
+    }
+    
+    // Conversations collection rules
+    match /conversations/{conversationId} {
+      // Users can access their own conversations
+      allow read, update: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      
+      // Organization members can read conversations within their org (for admin oversight)
+      allow read: if request.auth != null && 
+                     belongsToOrg(resource.data.organizationId);
+    }
+  }
+}
